@@ -5,37 +5,43 @@ import (
 	"gopkg.in/ini.v1"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 
 var frpcFilePath = "/etc/frp/frpc.ini"
+var cfg0FilePath = "/sys/fsl_otp/HW_OCOTP_CFG0"
+var cfg1FilePath = "/sys/fsl_otp/HW_OCOTP_CFG1"
 
-func getUid() string {
-	cfg0, err := ioutil.ReadFile("/sys/fsl_otp/HW_OCOTP_CFG0")
+func getUid(filePath string) string {
+	cfg, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		fmt.Println(err)
 		return ""
 	}
 
-	cfg1, err := ioutil.ReadFile("/sys/fsl_otp/HW_OCOTP_CFG1")
-	if err != nil {
-		fmt.Println(err)
-		return ""
+	str := string(cfg)[2:]
+	str = strings.Replace(str, "\n", "",-1)
+	str = strings.Replace(str, "\r", "",-1)
+
+	for true {
+		if len(str) >= 8 {
+			break
+		}
+		str = "0" + str
 	}
 
-	return string(cfg0)[2:10] + string(cfg1)[2:10]
+	return str
 }
 
 func fixFrpc(cfg *ini.File) {
 	cfg.Section("common").Key("server_addr").SetValue("152.136.175.226")
 	cfg.Section("common").Key("server_port").SetValue("8000")
-	if uid := getUid(); uid != "" {
-		cfg.Section("common").Key("user").SetValue(uid)
+	uid0, uid1 := getUid(cfg0FilePath), getUid(cfg1FilePath);
+	if uid0 != "" && uid1 != "" {
+		cfg.Section("common").Key("user").SetValue(uid0 + uid1)
 	}
 	cfg.Section("common").Key("tls_enable").SetValue("true")
 	cfg.Section("common").Key("token").SetValue("sysd")
-	cfg.Section("common").Key("log_file").SetValue("/etc/frp/frpc.log")
-	cfg.Section("common").Key("log_level").SetValue("info")
-	cfg.Section("common").Key("log_max_days").SetValue("60")
 
 	cfg.Section("ssh").Key("type").SetValue("tcp")
 	cfg.Section("ssh").Key("local_ip").SetValue("127.0.0.1")
