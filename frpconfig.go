@@ -51,14 +51,14 @@ func fixFrpc(cfg *ini.File) {
 	cfg.Section("common").Key("token").SetValue("sysd")
 
 	cfg.Section("sssh").Key("type").SetValue("stcp")
-	cfg.Section("sssh").Key("sk").SetValue(getHmac("uuid", "sysd_sssh"))
+	cfg.Section("sssh").Key("sk").SetValue(getHmac(uuid, "sysd_sssh"))
 	cfg.Section("sssh").Key("local_ip").SetValue("127.0.0.1")
 	cfg.Section("sssh").Key("local_port").SetValue("22")
 
-	cfg.Section("sscodesys").Key("type").SetValue("stcp")
-	cfg.Section("sscodesys").Key("sk").SetValue(getHmac("uuid", "sysd_scodesys"))
-	cfg.Section("sscodesys").Key("local_ip").SetValue("127.0.0.1")
-	cfg.Section("sscodesys").Key("local_port").SetValue("1217")
+	cfg.Section("scodesys").Key("type").SetValue("stcp")
+	cfg.Section("scodesys").Key("sk").SetValue(getHmac(uuid, "sysd_scodesys"))
+	cfg.Section("scodesys").Key("local_ip").SetValue("127.0.0.1")
+	cfg.Section("scodesys").Key("local_port").SetValue("1217")
 }
 
 func getHmac(s string, k string) string {
