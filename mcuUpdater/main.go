@@ -6,7 +6,8 @@ import (
 	"log"
 )
 
-var updateFileName = flag.String("n", "", "指定升级文件")
+var cmdUpload = flag.String("u", "", "指定上传文件")
+var cmdDownload = flag.String("d", "", "指定下载文件")
 var version = flag.CommandLine.Bool("v", false, "软件版本")
 
 func init() {
@@ -15,11 +16,28 @@ func init() {
 }
 
 func main() {
+	var (
+		filename string
+		mode     string
+	)
+
 	if *version {
-		fmt.Println("1.0.0")
+		fmt.Println("1.0.1")
 		return
 	}
 
-	updater := NewMcuUpdater()
-	updater.RunUdpServer()
+	if *cmdDownload != "" {
+		mode = "download"
+		filename = *cmdDownload
+	} else if *cmdUpload != "" {
+		mode = "upload"
+		filename = *cmdUpload
+	}
+
+	if filename != "" {
+		updater := NewMcuUpdater(filename, mode)
+		updater.RunUdpServer()
+	} else {
+		log.Println("no input params, please use '-v'")
+	}
 }

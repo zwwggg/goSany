@@ -13,7 +13,7 @@ const (
 	//mcu升级标识符
 	prtclTypeMcuUpdate = 0x58
 
-	//升级命令 McuUpdateStatus
+	//升级命令 status
 	mcuUpdateTypeError    = 0 //传输错误
 	mcuUpdateTypeDownload = 1 //请求下载
 	mcuUpdateTypeUpload   = 2 //请求上传
@@ -21,52 +21,66 @@ const (
 	mcuUpdateTypeComplete = 4 //传输完成
 
 	//
-	sizeOfSection = 128
+	sizeOfDownloadSection = 128
+	sizeOfUploadSection = 512
+	sizeOfUploadCnt = (256 - 32) * 1024 / sizeOfUploadSection
 
 	targetDevice  = "127.0.0.1"
 	currentDevice = "127.0.0.1"
 )
 
 type McuUpdater struct {
-	McuUpdateStatus uint8
-	File            *os.File
-	FileMaxPackage  int64
-	udpConn         *net.UDPConn
-	udpaddr         *net.UDPAddr
-	TimerReq        *time.Ticker
-	IsFinished      bool
-	updatePercent   int64
+	status         	uint8				//状态
+	mode		   	string 				//模式，download, upload
+	file           	*os.File			//打开或创建的文件
+	fileMaxPackage 	int16				//最大文件包数
+	udpConn        	*net.UDPConn		//udp连接
+	udpaddr        	*net.UDPAddr		//udp地址
+	timerReq       	*time.Ticker		//定时请求
+	timerUpload		*time.Ticker		//定时上传请求
+	isFinished     	bool				//是否完成
+	updatePercent	int16				//完成率
+	updateCnt		int16				//完成包数
 }
 
-func NewMcuUpdater() *McuUpdater {
+func NewMcuUpdater(filename, mode string) *McuUpdater {
 	var (
 		err     error
 		fs      os.FileInfo
-		mcuFile string
 	)
+
 	m := &McuUpdater{}
-	m.McuUpdateStatus = mcuUpdateTypeComplete
-	if m.File != nil {
-		m.File.Close()
+	if filename == "" || mode == "" {
+		return m
 	}
-	if *updateFileName != "" {
-		mcuFile = *updateFileName
-	} else {
-		mcuFile = "MCU_APP.bin"
+
+	m.status = mcuUpdateTypeComplete
+	m.mode = mode
+	if m.file != nil {
+		m.file.Close()
 	}
-	m.File, err = os.Open(mcuFile)
+
+	if m.mode == "download" {
+		m.file, err = os.Open(filename)
+	} else if m.mode == "upload" {
+		m.file, err = os.Create(filename)
+	}
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
 
-	fs, err = os.Stat(mcuFile)
+	fs, err = os.Stat(filename)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
 
-	m.FileMaxPackage = (fs.Size() + sizeOfSection - 1) / sizeOfSection
+	if m.mode == "download" {
+		m.fileMaxPackage = int16((fs.Size() + sizeOfDownloadSection - 1) / sizeOfDownloadSection)
+	} else if m.mode == "upload" {
+		m.fileMaxPackage = sizeOfUploadCnt
+	}
 	m.updatePercent = 0
-	m.IsFinished = false
+	m.isFinished = false
 	m.udpaddr, _ = net.ResolveUDPAddr("udp4", targetDevice+":10319")
 	return m
 }
@@ -87,40 +101,67 @@ func (m *McuUpdater) fixPayload(b []byte) []byte {
 	return payload
 }
 
-func (m *McuUpdater) Send(buffer []byte) {
+func (m *McuUpdater) send(buffer []byte) {
 	if m.udpConn != nil && m.udpaddr != nil {
 		m.udpConn.WriteToUDP(m.fixPayload(buffer), m.udpaddr)
 	}
 }
 
-func (m *McuUpdater) RequestDownload() {
-	m.TimerReq = time.NewTicker(500 * time.Millisecond)
+func (m *McuUpdater) sendUploadRequest(num int16) {
+	buf := make([]byte, 3)
+	buf[0] = mcuUpdateTypeSend << 5
+	buf[1] = byte(num >> 8)
+	buf[2] = byte(num & 0xff)
+	m.send(buf)
+}
+
+func (m *McuUpdater) udpRequest() {
+	m.timerReq = time.NewTicker(500 * time.Millisecond)
+	m.timerUpload = time.NewTicker(100 * time.Millisecond)
+	m.timerUpload.Stop()
 
 	go func() {
 		for {
 			select {
-			case <-m.TimerReq.C:
+			case <-m.timerReq.C:
 				if m.udpConn != nil && m.udpaddr != nil {
-					fmt.Println("request download")
 					m.udpConn.WriteToUDP([]byte("uart"), m.udpaddr)
-					m.Send([]byte{mcuUpdateTypeDownload << 5})
+					if m.mode == "download" {
+						fmt.Println("request download")
+						m.send([]byte{mcuUpdateTypeDownload << 5})
+					} else if m.mode == "upload" {
+						fmt.Println("request upload")
+						m.send([]byte{mcuUpdateTypeUpload << 5})
+					}
 				}
 			}
 		}
 	}()
 
+	if m.mode == "upload" {
+		go func() {
+			for {
+				select {
+				case <-m.timerUpload.C:
+					if m.udpConn != nil && m.udpaddr != nil {
+						m.sendUploadRequest(m.updateCnt)
+					}
+				}
+			}
+		}()
+	}
 }
 
-func (m *McuUpdater) sendPackage(num int64) (bool, error) {
-	if m.File == nil {
+func (m *McuUpdater) sendDownloadPackage(num int16) (bool, error) {
+	if m.file == nil {
 		return false, errors.New("no valid file, please check...")
 	}
 
-	buffer := make([]byte, sizeOfSection)
+	buffer := make([]byte, sizeOfDownloadSection)
 
-	offset := num * sizeOfSection
-	m.File.Seek(offset, 0)
-	n, err := m.File.Read(buffer)
+	offset := int64(num * sizeOfDownloadSection)
+	m.file.Seek(offset, 0)
+	_, err := m.file.Read(buffer)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -128,18 +169,13 @@ func (m *McuUpdater) sendPackage(num int64) (bool, error) {
 	packageNum := []byte{byte(num >> 8), byte(num)}
 	buffer = append(packageNum, buffer...)
 	buffer = append([]byte{mcuUpdateTypeSend << 5}, buffer...)
-	m.Send(buffer)
+	m.send(buffer)
 
 	//send data
 	// log.Printf("%x\n", buffer)
 
-	if n == 0 {
-		fmt.Println("at the end of file")
-		return true, nil
-	}
-
-	if n != sizeOfSection {
-		m.File.Close()
+	if num + 1 == m.fileMaxPackage {
+		m.file.Close()
 		return true, nil
 	}
 
@@ -157,17 +193,17 @@ func (m *McuUpdater) RunUdpServer() {
 		fmt.Println(err)
 	}
 	defer m.udpConn.Close()
-	defer m.File.Close()
+	defer m.file.Close()
 
 	fmt.Println("udp listening ...")
 
-	m.RequestDownload()
+	m.udpRequest()
 
 	//udp不需要Accept
 	for {
 		m.handleConnection(m.udpConn)
 
-		if m.IsFinished {
+		if m.isFinished {
 			break
 		}
 	}
@@ -190,6 +226,8 @@ func (m *McuUpdater) handleConnection(udpConn *net.UDPConn) {
 	if buf[0] != 0x5a || buf[1] != 0xa5 || len(buf) < 7 {
 		return
 	}
+
+	//fmt.Printf("%02x\n", buf)
 
 	//数据长度验证
 	payloadLen := int(buf[4]) + int(buf[3])<<8
@@ -214,39 +252,77 @@ func (m *McuUpdater) handleConnection(udpConn *net.UDPConn) {
 	updateType := int(buf[0] >> 5)
 	switch updateType {
 	case mcuUpdateTypeDownload:
-		if m.McuUpdateStatus == mcuUpdateTypeComplete || m.McuUpdateStatus == mcuUpdateTypeError {
+		if m.status == mcuUpdateTypeComplete || m.status == mcuUpdateTypeError {
 			fmt.Println("mcu_update_type_download")
-			m.McuUpdateStatus = mcuUpdateTypeDownload
-			m.TimerReq.Stop()
+			m.status = mcuUpdateTypeDownload
+			m.timerReq.Stop()
 		}
 	case mcuUpdateTypeUpload:
-		fmt.Println("mcu_update_type_upload")
+		if m.status == mcuUpdateTypeComplete || m.status == mcuUpdateTypeError {
+			fmt.Println("mcu_update_type_upload")
+			m.status = mcuUpdateTypeUpload
+			m.timerReq.Stop()
+		}
 	case mcuUpdateTypeSend:
-		if m.McuUpdateStatus != mcuUpdateTypeSend && m.McuUpdateStatus != mcuUpdateTypeDownload {
-			return
+		if m.status != mcuUpdateTypeSend && m.status != mcuUpdateTypeDownload && m.status != mcuUpdateTypeUpload {
+			break
 		} else {
-			// log.Println("mcu_update_type_send")
-			m.McuUpdateStatus = mcuUpdateTypeSend
+			m.status = mcuUpdateTypeSend
+			num := int16(buf[2]) | (int16(buf[1]) << 8)
 
-			num := int64(buf[2]) | (int64(buf[1]) << 8)
-			isFinish, _ := m.sendPackage(num)
+			if m.mode == "download" {
+				m.updateCnt = num
+				isFinish, _ := m.sendDownloadPackage(m.updateCnt)
 
-			currentPercent := (num + 1) * 100 / m.FileMaxPackage
-			if currentPercent != m.updatePercent {
-				m.updatePercent = currentPercent
-				fmt.Printf("\rmcu update percent:%d%%", currentPercent)
-			}
+				//进度展示
+				currentPercent := int16((int64(m.updateCnt) + 1) * 100 / int64(m.fileMaxPackage))
+				if currentPercent != m.updatePercent {
+					m.updatePercent = currentPercent
+					//fmt.Printf("\rmcu update num: %d, maxnum: %d, percent:%d%%", num, m.fileMaxPackage, currentPercent)
+				}
+				fmt.Printf("\rmcu update num: %d, maxnum: %d, percent:%d%%", num, m.fileMaxPackage, currentPercent)
 
-			if isFinish {
-				m.Send([]byte{mcuUpdateTypeComplete << 5})
-				m.IsFinished = true
-				fmt.Println("\nfinished ...")
+				if isFinish {
+					m.send([]byte{mcuUpdateTypeComplete << 5})
+					m.isFinished = true
+					fmt.Println("\nfinished ...")
+				}
+			} else if m.mode == "upload" {
+				if len(buf) != (sizeOfUploadSection + 3) && num != 0 {
+					fmt.Println("data package length incorrect")
+					break
+				}
+
+				//mcu返回的第一帧不包含数据，不做处理
+				if len(buf) == (sizeOfUploadSection + 3) {
+					m.timerUpload.Stop()
+					m.updateCnt++
+					m.file.Write(buf[3:])
+				}
+
+				//进度展示
+				currentPercent := int16((int64(m.updateCnt) * 100) / sizeOfUploadCnt)
+				if currentPercent != m.updatePercent {
+					m.updatePercent = currentPercent
+					fmt.Printf("\rmcu upload percent:%d%%", currentPercent)
+				}
+
+				//数据接收完成
+				if m.updateCnt == sizeOfUploadCnt {
+					m.file.Close()
+					m.send([]byte{mcuUpdateTypeComplete << 5})
+					m.isFinished = true
+					fmt.Println("\nfinished ...")
+				}
+
+				//请求下一帧
+				m.sendUploadRequest(m.updateCnt)
+				m.timerUpload.Reset(100 * time.Millisecond)
 			}
 		}
 	case mcuUpdateTypeComplete:
 	case mcuUpdateTypeError:
-		m.McuUpdateStatus = uint8(updateType)
+		m.status = uint8(updateType)
 	default:
-
 	}
 }
