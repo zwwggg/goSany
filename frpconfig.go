@@ -12,7 +12,8 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-var frpcFilePath = "/etc/frp/frpc.ini"
+// var frpcFilePath = "/etc/frp/frpc.ini"
+var frpcFilePath = "./frpc.ini"
 var cfg0FilePath = "/sys/fsl_otp/HW_OCOTP_CFG0"
 var cfg1FilePath = "/sys/fsl_otp/HW_OCOTP_CFG1"
 var version = "1.0.0"
@@ -40,8 +41,12 @@ func getUid(filePath string) string {
 
 func fixFrpc(cfg *ini.File) {
 	uuid := ""
-	cfg.Section("common").Key("server_addr").SetValue("152.136.175.226")
-	cfg.Section("common").Key("server_port").SetValue("8000")
+	if !cfg.Section("common").Haskey("server_addr") {
+		cfg.Section("common").Key("server_addr").SetValue("152.136.175.226")
+	}
+	if !cfg.Section("common").HasKey("server_port") {
+		cfg.Section("common").Key("server_port").SetValue("8000")
+	}
 	uid0, uid1 := getUid(cfg0FilePath), getUid(cfg1FilePath)
 	if uid0 != "" && uid1 != "" {
 		uuid = uid0 + uid1
@@ -77,7 +82,10 @@ func main() {
 		return
 	}
 
-	cfg := ini.Empty()
+	cfg, err := ini.Load(frpcFilePath)
+	if err != nil {
+		cfg = ini.Empty()
+	}
 
 	fixFrpc(cfg)
 	cfg.SaveTo(frpcFilePath)
