@@ -22,7 +22,7 @@ func main() {
 	)
 
 	if *version {
-		fmt.Println("1.1.0")
+		fmt.Println("1.1.1")
 		return
 	}
 
