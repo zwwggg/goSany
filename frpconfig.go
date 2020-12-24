@@ -12,8 +12,7 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-// var frpcFilePath = "/etc/frp/frpc.ini"
-var frpcFilePath = "./frpc.ini"
+var frpcFilePath = "/etc/frp/"
 var cfg0FilePath = "/sys/fsl_otp/HW_OCOTP_CFG0"
 var cfg1FilePath = "/sys/fsl_otp/HW_OCOTP_CFG1"
 var version = "1.0.0"
@@ -55,15 +54,17 @@ func fixFrpc(cfg *ini.File) {
 	cfg.Section("common").Key("tls_enable").SetValue("true")
 	cfg.Section("common").Key("token").SetValue("sysd")
 
-	cfg.Section("sssh").Key("type").SetValue("stcp")
-	cfg.Section("sssh").Key("sk").SetValue(getHmac(uuid, "sysd_sssh"))
-	cfg.Section("sssh").Key("local_ip").SetValue("127.0.0.1")
-	cfg.Section("sssh").Key("local_port").SetValue("22")
-
-	cfg.Section("scodesys").Key("type").SetValue("stcp")
-	cfg.Section("scodesys").Key("sk").SetValue(getHmac(uuid, "sysd_scodesys"))
-	cfg.Section("scodesys").Key("local_ip").SetValue("127.0.0.1")
-	cfg.Section("scodesys").Key("local_port").SetValue("1217")
+	if *domain == "admin" {
+		cfg.Section("sssh").Key("type").SetValue("stcp")
+		cfg.Section("sssh").Key("sk").SetValue(getHmac(uuid, "sysd_sssh"))
+		cfg.Section("sssh").Key("local_ip").SetValue("127.0.0.1")
+		cfg.Section("sssh").Key("local_port").SetValue("22")
+	} else if *domain == "user" {
+		cfg.Section("scodesys").Key("type").SetValue("stcp")
+		cfg.Section("scodesys").Key("sk").SetValue(getHmac(uuid, "sysd_scodesys"))
+		cfg.Section("scodesys").Key("local_ip").SetValue("127.0.0.1")
+		cfg.Section("scodesys").Key("local_port").SetValue("1217")
+	}
 }
 
 func getHmac(s string, k string) string {
@@ -73,6 +74,7 @@ func getHmac(s string, k string) string {
 }
 
 var ver = flag.Bool("v", false, "version")
+var domain = flag.String("d", "", "admin or user")
 
 func main() {
 	//返回软件版本
@@ -82,11 +84,17 @@ func main() {
 		return
 	}
 
-	cfg, err := ini.Load(frpcFilePath)
+	if *domain == "" {
+		fmt.Println("no valid domain, pls use '-v' for help")
+		return
+	}
+
+	frpcFile := frpcFilePath + "frpc_" + *domain + ".ini"
+	cfg, err := ini.Load(frpcFile)
 	if err != nil {
 		cfg = ini.Empty()
 	}
 
 	fixFrpc(cfg)
-	cfg.SaveTo(frpcFilePath)
+	cfg.SaveTo(frpcFile)
 }
