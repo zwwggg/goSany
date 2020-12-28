@@ -15,7 +15,7 @@ import (
 var frpcFilePath = "/etc/frp/"
 var cfg0FilePath = "/sys/fsl_otp/HW_OCOTP_CFG0"
 var cfg1FilePath = "/sys/fsl_otp/HW_OCOTP_CFG1"
-var version = "1.0.0"
+var version = "1.0.1"
 
 func getUid(filePath string) string {
 	cfg, err := ioutil.ReadFile(filePath)
