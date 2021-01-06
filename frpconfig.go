@@ -15,7 +15,7 @@ import (
 var frpcFilePath = "/etc/frp/"
 var cfg0FilePath = "/sys/fsl_otp/HW_OCOTP_CFG0"
 var cfg1FilePath = "/sys/fsl_otp/HW_OCOTP_CFG1"
-var version = "1.0.1"
+var version = "1.0.2"
 
 func getUid(filePath string) string {
 	cfg, err := ioutil.ReadFile(filePath)
@@ -59,11 +59,15 @@ func fixFrpc(cfg *ini.File) {
 		cfg.Section("sssh").Key("sk").SetValue(getHmac(uuid, "sysd_sssh"))
 		cfg.Section("sssh").Key("local_ip").SetValue("127.0.0.1")
 		cfg.Section("sssh").Key("local_port").SetValue("22")
+		cfg.Section("sssh").Key("use_encryption").SetValue("true")
+		cfg.Section("sssh").Key("use_compression").SetValue("true")
 	} else if *domain == "user" {
 		cfg.Section("scodesys").Key("type").SetValue("stcp")
 		cfg.Section("scodesys").Key("sk").SetValue(getHmac(uuid, "sysd_scodesys"))
 		cfg.Section("scodesys").Key("local_ip").SetValue("127.0.0.1")
 		cfg.Section("scodesys").Key("local_port").SetValue("1217")
+		cfg.Section("scodesys").Key("use_encryption").SetValue("true")
+		cfg.Section("scodesys").Key("use_compression").SetValue("true")
 	}
 }
 
